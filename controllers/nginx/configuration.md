@@ -57,6 +57,7 @@ The following annotations are supported:
 |[ingress.kubernetes.io/proxy-body-size](#custom-max-body-size)|string|
 |[ingress.kubernetes.io/rewrite-target](#rewrite)|URI|
 |[ingress.kubernetes.io/secure-backends](#secure-backends)|true or false|
+|[ingress.kubernetes.io/service-upstream](#service-upstream)|true or false|
 |[ingress.kubernetes.io/session-cookie-name](#cookie-affinity)|string|
 |[ingress.kubernetes.io/session-cookie-hash](#cookie-affinity)|string|
 |[ingress.kubernetes.io/ssl-redirect](#server-side-https-enforcement-through-redirect)|true or false|
@@ -130,7 +131,7 @@ The secret must be created in the same namespace as the Ingress rule.
 ingress.kubernetes.io/auth-realm: "realm string"
 ```
 
-Please check the [auth](/examples/auth/nginx/README.md) example.
+Please check the [auth](/examples/auth/basic/nginx/README.md) example.
 
 ### Certificate Authentication
 
@@ -213,6 +214,17 @@ This is possible thanks to the [ngx_stream_ssl_preread_module](https://nginx.org
 
 By default NGINX uses `http` to reach the services. Adding the annotation `ingress.kubernetes.io/secure-backends: "true"` in the Ingress rule changes the protocol to `https`.
 
+### Service Upstream
+
+By default the NGINX ingress controller uses a list of all endpoints (Pod IP/port) in the NGINX upstream configuration. This annotation disables that behavior and instead uses a single upstream in NGINX, the service's Cluster IP and port. This can be desirable for things like zero-downtime deployments as it reduces the need to reload NGINX configuration when Pods come up and down. See issue [#257](https://github.com/kubernetes/ingress/issues/257).
+
+
+#### Known Issues
+
+If the `service-upstream` annotation is specified the following things should be taken into consideration:
+
+* Sticky Sessions will not work as only round-robin load balancing is supported. 
+* The `proxy_next_upstream` directive will not have any effect meaning on error the request will not be dispatched to another upstream.
 
 ### Server-side HTTPS enforcement through redirect
 
@@ -273,8 +285,6 @@ Example usage: `custom-http-errors: 404,415`
 
 **enable-underscores-in-headers:** Enables underscores in header names. This is disabled by default.
 
-**enable-underscores-in-headers:** Enables underscores in header names. This is disabled by default.
-
 **enable-vts-status:** Allows the replacement of the default status page with a third party module named [nginx-module-vts](https://github.com/vozlt/nginx-module-vts).
 
 
@@ -305,13 +315,29 @@ https://blog.qualys.com/securitylabs/2016/03/28/the-importance-of-a-proper-http-
 The zero value disables keep-alive client connections.
 http://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout
 
-
 **load-balance:** Sets the algorithm to use for load balancing. The value can either be round_robin to
 use the default round robin load balancer, least_conn to use the least connected method, or
 ip_hash to use a hash of the server for routing. The default is least_conn.
 http://nginx.org/en/docs/http/load_balancing.html.
 
+**log-format-upstream:** Sets the nginx [log format](http://nginx.org/en/docs/http/ngx_http_log_module.html#log_format).
 
+Example for json output:
+
+```
+log-format-upstream: '{ "time": "$time_iso8601", "remote_addr": "$proxy_protocol_addr",
+    "x-forward-for": "$proxy_add_x_forwarded_for", "request_id": "$request_id", "remote_user":
+    "$remote_user", "bytes_sent": $bytes_sent, "request_time": $request_time, "status":
+    $status, "vhost": "$host", "request_proto": "$server_protocol", "path": "$uri",
+    "request_query": "$args", "request_length": $request_length, "duration": $request_time,
+    "method": "$request_method", "http_referrer": "$http_referer", "http_user_agent":
+    "$http_user_agent" }' 
+  ```
+
+**log-format-stream:** Sets the nginx [stream format](https://nginx.org/en/docs/stream/ngx_stream_log_module.html#log_format)
+.
+
+    
 **max-worker-connections:** Sets the maximum number of simultaneous connections that can be opened by each [worker process](http://nginx.org/en/docs/ngx_core_module.html#worker_connections).
 
 
@@ -333,6 +359,9 @@ http://nginx.org/en/docs/http/load_balancing.html.
 **proxy-send-timeout:** Sets the timeout in seconds for [transmitting a request to the proxied server](http://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_send_timeout). The timeout is set only between two successive write operations, not for the transmission of the whole request.
 
 
+**proxy-next-upstream:** Specifies in [which cases](http://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_next_upstream) a request should be passed to the next server.
+
+
 **retry-non-idempotent:** Since 1.9.13 NGINX will not retry non-idempotent requests (POST, LOCK, PATCH) in case of an error in the upstream server.
 
 The previous behavior can be restored using the value "true".
@@ -346,6 +375,13 @@ http://nginx.org/en/docs/http/ngx_http_core_module.html#server_names_hash_bucket
 **server-name-hash-max-size:** Sets the maximum size of the [server names hash tables](http://nginx.org/en/docs/http/ngx_http_core_module.html#server_names_hash_max_size) used in server names, map directive’s values, MIME types, names of request header strings, etc.
 http://nginx.org/en/docs/hash.html
 
+**proxy-headers-hash-bucket-size:** Sets the size of the bucket for the proxy headers hash tables.
+http://nginx.org/en/docs/hash.html
+https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_headers_hash_bucket_size
+
+**proxy-headers-hash-max-size:** Sets the maximum size of the proxy headers hash tables.
+http://nginx.org/en/docs/hash.html
+https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_headers_hash_max_size
 
 **server-tokens:** Send NGINX Server header in responses and display NGINX version in error pages. Enabled by default.
 
@@ -425,6 +461,9 @@ The default mime type list to compress is: `application/atom+xml application/jav
 **worker-processes:** Sets the number of [worker processes](http://nginx.org/en/docs/ngx_core_module.html#worker_processes). The default of "auto" means number of available CPU cores.
 
 
+**limit-conn-zone-variable:** Sets parameters for a shared memory zone that will keep states for various keys of [limit_conn_zone](http://nginx.org/en/docs/http/ngx_http_limit_conn_module.html#limit_conn_zone). The default of "$binary_remote_addr" variable’s size is always 4 bytes for IPv4 addresses or 16 bytes for IPv6 addresses.
+
+
 ### Default configuration options
 
 The following table shows the options, the default value and a description.
@@ -444,7 +483,9 @@ The following table shows the options, the default value and a description.
 |hsts-max-age|"15724800"|
 |hsts-preload|"false"|
 |ignore-invalid-headers|"true"|
-|keep-alive|"75"|
+|keep-alive|"75"| 
+|log-format-stream|[$time_local] $protocol $status $bytes_sent $bytes_received $session_time|
+|log-format-upstream|[$the_real_ip] - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" $request_length $request_time [$proxy_upstream_name] $upstream_addr $upstream_response_length $upstream_response_time $upstream_status|
 |map-hash-bucket-size|"64"|
 |max-worker-connections|"16384"|
 |proxy-body-size|same as body-size|
@@ -469,11 +510,13 @@ The following table shows the options, the default value and a description.
 |ssl-session-timeout|10m|
 |use-gzip|"true"|
 |use-http2|"true"|
+|upstream-keepalive-connections|"0" (disabled)|
 |variables-hash-bucket-size|64|
 |variables-hash-max-size|2048|
 |vts-status-zone-size|10m|
 |whitelist-source-range|permit all|
 |worker-processes|number of CPUs|
+|limit-conn-zone-variable|$binary_remote_addr|
 
 
 ### Websockets

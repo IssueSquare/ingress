@@ -1,5 +1,135 @@
 Changelog
 
+Changelog
+
+### 0.9-beta.11
+
+**Image:**  `gcr.io/google_containers/nginx-ingress-controller:0.9.0-beta.11`
+
+Fixes NGINX [CVE-2017-7529](http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-7529)
+
+*Changes:*
+
+- [X] [#659](https://github.com/kubernetes/ingress/pull/659) [nginx] TCP configmap should allow listen proxy_protocol per service
+- [X] [#730](https://github.com/kubernetes/ingress/pull/730) Add support for add_headers
+- [X] [#808](https://github.com/kubernetes/ingress/pull/808) HTTP->HTTPS redirect does not work with use-proxy-protocol: "true"
+- [X] [#921](https://github.com/kubernetes/ingress/pull/921) Make proxy-real-ip-cidr a comma separated list
+- [X] [#930](https://github.com/kubernetes/ingress/pull/930) Add support for proxy protocol in TCP services
+- [X] [#933](https://github.com/kubernetes/ingress/pull/933) Lint code
+- [X] [#937](https://github.com/kubernetes/ingress/pull/937) Fix lint code errors
+- [X] [#940](https://github.com/kubernetes/ingress/pull/940) Sets parameters for a shared memory zone of limit_conn_zone
+- [X] [#949](https://github.com/kubernetes/ingress/pull/949) fix nginx version to 1.13.3 to fix integer overflow
+- [X] [#956](https://github.com/kubernetes/ingress/pull/956) Simplify handling of ssl certificates
+- [X] [#958](https://github.com/kubernetes/ingress/pull/958) Release ubuntu-slim:0.13
+- [X] [#959](https://github.com/kubernetes/ingress/pull/959) Release nginx-slim 0.21
+- [X] [#960](https://github.com/kubernetes/ingress/pull/960) Update nginx in ingress controller
+- [X] [#964](https://github.com/kubernetes/ingress/pull/964) Support for proxy_headers_hash_bucket_size and proxy_headers_hash_max_size
+- [X] [#966](https://github.com/kubernetes/ingress/pull/966) Fix error checking for pod name & NS
+- [X] [#967](https://github.com/kubernetes/ingress/pull/967) Fix runningAddresses typo
+- [X] [#968](https://github.com/kubernetes/ingress/pull/968) Fix missing hyphen in yaml for nginx RBAC example
+- [X] [#973](https://github.com/kubernetes/ingress/pull/973) check number of servers in configuration comparator
+
+
+### 0.9-beta.10
+
+**Image:**  `gcr.io/google_containers/nginx-ingress-controller:0.9.0-beta.10`
+
+Fix release 0.9-beta.9
+
+### 0.9-beta.9
+
+**Image:**  `gcr.io/google_containers/nginx-ingress-controller:0.9.0-beta.9`
+
+*New Features:*
+
+- Add support for arm and ppc64le
+
+
+*Changes:*
+
+- [X] [#548](https://github.com/kubernetes/ingress/pull/548) nginx: support multidomain certificates
+- [X] [#620](https://github.com/kubernetes/ingress/pull/620) [nginx] Listening ports are not configurable, so ingress can't be run multiple times per node when using CNI
+- [X] [#648](https://github.com/kubernetes/ingress/pull/648) publish-service argument isn't honored when ELB is internal only facing.
+- [X] [#833](https://github.com/kubernetes/ingress/pull/833) WIP: Avoid reloads implementing Equals in structs
+- [X] [#838](https://github.com/kubernetes/ingress/pull/838) Feature request: Add ingress annotation to enable upstream "keepalive" option
+- [X] [#844](https://github.com/kubernetes/ingress/pull/844) ingress annotations affinity is not working
+- [X] [#862](https://github.com/kubernetes/ingress/pull/862) Avoid reloads implementing Equaler interface
+- [X] [#864](https://github.com/kubernetes/ingress/pull/864) Remove dead code
+- [X] [#868](https://github.com/kubernetes/ingress/pull/868) Lint nginx code
+- [X] [#871](https://github.com/kubernetes/ingress/pull/871) Add feature to allow sticky sessions per location
+- [X] [#873](https://github.com/kubernetes/ingress/pull/873) Update README.md
+- [X] [#876](https://github.com/kubernetes/ingress/pull/876) Add information about nginx controller flags
+- [X] [#878](https://github.com/kubernetes/ingress/pull/878) Update go to 1.8.3
+- [X] [#881](https://github.com/kubernetes/ingress/pull/881) Option to not remove loadBalancer status record?
+- [X] [#882](https://github.com/kubernetes/ingress/pull/882) Add flag to skip the update of Ingress status on shutdown
+- [X] [#885](https://github.com/kubernetes/ingress/pull/885) Don't use $proxy_protocol var which may be undefined.
+- [X] [#886](https://github.com/kubernetes/ingress/pull/886) Add support for SubjectAltName in SSL certificates
+- [X] [#888](https://github.com/kubernetes/ingress/pull/888) Update nginx-slim to 0.19
+- [X] [#889](https://github.com/kubernetes/ingress/pull/889) Add PHOST to backend
+- [X] [#890](https://github.com/kubernetes/ingress/pull/890) Improve variable configuration for source IP address
+- [X] [#892](https://github.com/kubernetes/ingress/pull/892) Add upstream keepalive connections cache
+- [X] [#897](https://github.com/kubernetes/ingress/pull/897) Update outdated ingress resource link
+- [X] [#898](https://github.com/kubernetes/ingress/pull/898) add error check right when reload nginx fail
+- [X] [#899](https://github.com/kubernetes/ingress/pull/899) Fix nginx error check
+- [X] [#900](https://github.com/kubernetes/ingress/pull/900) After #862 changes in the configmap do not trigger a reload
+- [X] [#901](https://github.com/kubernetes/ingress/pull/901) [doc] Update NGinX status port to 18080
+- [X] [#902](https://github.com/kubernetes/ingress/pull/902) Always reload after a change in the configuration
+- [X] [#904](https://github.com/kubernetes/ingress/pull/904) Fix nginx sticky sessions
+- [X] [#906](https://github.com/kubernetes/ingress/pull/906) Fix race condition with closed channels
+- [X] [#907](https://github.com/kubernetes/ingress/pull/907) nginx/proxy: allow specifying next upstream behaviour
+- [X] [#910](https://github.com/kubernetes/ingress/pull/910) Feature request: use `X-Forwarded-Host` from the reverse proxy before
+- [X] [#911](https://github.com/kubernetes/ingress/pull/911) Improve X-Forwarded-Host support
+- [X] [#915](https://github.com/kubernetes/ingress/pull/915) Release nginx-slim 0.20
+- [X] [#916](https://github.com/kubernetes/ingress/pull/916) Add arm and ppc64le support
+- [X] [#919](https://github.com/kubernetes/ingress/pull/919) Apply the 'ssl-redirect' annotation per-location
+- [X] [#922](https://github.com/kubernetes/ingress/pull/922) Add example of TLS termination using a classic ELB
+
+### 0.9-beta.8
+
+**Image:**  `gcr.io/google_containers/nginx-ingress-controller:0.9.0-beta.8`
+
+*Changes:*
+
+- [X] [#761](https://github.com/kubernetes/ingress/pull/761) NGINX TCP Ingresses do not bind on IPv6
+- [X] [#850](https://github.com/kubernetes/ingress/pull/850) Fix IPv6 UDP stream section
+- [X] [#851](https://github.com/kubernetes/ingress/pull/851) ensure private key and certificate match
+- [X] [#852](https://github.com/kubernetes/ingress/pull/852) Don't expose certificate metrics for default server
+- [X] [#846](https://github.com/kubernetes/ingress/pull/846) Match ServicePort to Endpoints by Name
+- [X] [#854](https://github.com/kubernetes/ingress/pull/854) Document log-format-stream and log-format-upstream
+- [X] [#847](https://github.com/kubernetes/ingress/pull/847) fix semicolon
+- [X] [#848](https://github.com/kubernetes/ingress/pull/848) Add metric "ssl certificate expiration"
+- [X] [#839](https://github.com/kubernetes/ingress/pull/839) "No endpoints" issue
+- [X] [#845](https://github.com/kubernetes/ingress/pull/845) Fix no endpoints issue when named ports are used
+- [X] [#822](https://github.com/kubernetes/ingress/pull/822) Release ubuntu-slim 0.11
+- [X] [#824](https://github.com/kubernetes/ingress/pull/824) Update nginx-slim to 0.18
+- [X] [#823](https://github.com/kubernetes/ingress/pull/823) Release nginx-slim 0.18
+- [X] [#827](https://github.com/kubernetes/ingress/pull/827) Introduce working example of nginx controller with rbac
+- [X] [#835](https://github.com/kubernetes/ingress/pull/835) Make log format json escaping configurable
+- [X] [#843](https://github.com/kubernetes/ingress/pull/843) Avoid setting maximum number of open file descriptors lower than 1024
+- [X] [#837](https://github.com/kubernetes/ingress/pull/837) Cleanup interface
+- [X] [#836](https://github.com/kubernetes/ingress/pull/836) Make log format json escaping configurable
+- [X] [#828](https://github.com/kubernetes/ingress/pull/828) Wrap IPv6 endpoints in []
+- [X] [#821](https://github.com/kubernetes/ingress/pull/821) nginx-ingress: occasional 503 Service Temporarily Unavailable
+- [X] [#829](https://github.com/kubernetes/ingress/pull/829) feat(template): wrap IPv6 addresses in []
+- [X] [#786](https://github.com/kubernetes/ingress/pull/786) Update echoserver image version in examples
+- [X] [#825](https://github.com/kubernetes/ingress/pull/825) Create or delete ingress based on class annotation
+- [X] [#790](https://github.com/kubernetes/ingress/pull/790) #789 removing duplicate X-Real-IP header 
+- [X] [#792](https://github.com/kubernetes/ingress/pull/792) Avoid checking if the controllers are synced
+- [X] [#798](https://github.com/kubernetes/ingress/pull/798) nginx: RBAC for leader election
+- [X] [#799](https://github.com/kubernetes/ingress/pull/799) could not build variables_hash
+- [X] [#809](https://github.com/kubernetes/ingress/pull/809) Fix dynamic variable name
+- [X] [#804](https://github.com/kubernetes/ingress/pull/804) Fix #798 - RBAC for leader election
+- [X] [#806](https://github.com/kubernetes/ingress/pull/806) fix ingress rbac roles
+- [X] [#811](https://github.com/kubernetes/ingress/pull/811) external auth - proxy_pass_request_body off + big bodies give 500/413
+- [X] [#785](https://github.com/kubernetes/ingress/pull/785) Publish echoheader image
+- [X] [#813](https://github.com/kubernetes/ingress/pull/813) Added client_max_body_size to authPath location
+- [X] [#814](https://github.com/kubernetes/ingress/pull/814) rbac-nginx: resourceNames cannot filter create verb
+- [X] [#774](https://github.com/kubernetes/ingress/pull/774) Add IPv6 support in TCP and UDP stream section
+- [X] [#784](https://github.com/kubernetes/ingress/pull/784) Allow customization of variables hash tables
+- [X] [#782](https://github.com/kubernetes/ingress/pull/782) Set "proxy_pass_header Server;"
+- [X] [#783](https://github.com/kubernetes/ingress/pull/783) nginx/README.md: clarify app-root and fix example hyperlink
+- [X] [#787](https://github.com/kubernetes/ingress/pull/787) Add setting to allow returning the Server header from the backend
+
 ### 0.9-beta.7
 
 **Image:**  `gcr.io/google_containers/nginx-ingress-controller:0.9.0-beta.7`

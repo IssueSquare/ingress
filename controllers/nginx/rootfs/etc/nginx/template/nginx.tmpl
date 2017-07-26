@@ -3,6 +3,7 @@
 {{ $healthzURI := .HealthzURI }}
 {{ $backends := .Backends }}
 {{ $proxyHeaders := .ProxySetHeaders }}
+{{ $addHeaders := .AddHeaders }}
 daemon off;
 
 worker_processes {{ $cfg.WorkerProcesses }};
@@ -20,10 +21,14 @@ events {
 http {
     {{/* we use the value of the header X-Forwarded-For to be able to use the geo_ip module */}}
     {{ if $cfg.UseProxyProtocol }}
-    set_real_ip_from    {{ $cfg.ProxyRealIPCIDR }};
+    {{ range $trusted_ip := $cfg.ProxyRealIPCIDR }}
+    set_real_ip_from    {{ $trusted_ip }};
+    {{ end }}
     real_ip_header      proxy_protocol;
     {{ else }}
-    set_real_ip_from    {{ $cfg.ProxyRealIPCIDR }};
+    {{ range $trusted_ip := $cfg.ProxyRealIPCIDR }}
+    set_real_ip_from    {{ $trusted_ip }};
+    {{ end }}
     real_ip_header      X-Forwarded-For;
     {{ end }}
 
@@ -71,6 +76,9 @@ http {
     server_names_hash_bucket_size   {{ $cfg.ServerNameHashBucketSize }};
     map_hash_bucket_size            {{ $cfg.MapHashBucketSize }};
 
+    proxy_headers_hash_max_size     {{ $cfg.ProxyHeadersHashMaxSize }};
+    proxy_headers_hash_bucket_size  {{ $cfg.ProxyHeadersHashBucketSize }};
+
     variables_hash_bucket_size      {{ $cfg.VariablesHashBucketSize }};
     variables_hash_max_size         {{ $cfg.VariablesHashMaxSize }};
 
@@ -88,12 +96,17 @@ http {
     gzip_proxied any;
     {{ end }}
 
+    # Custom headers for response
+    {{ range $k, $v := $addHeaders }}
+    add_header {{ $k }}            "{{ $v }}";
+    {{ end }}
+
     server_tokens {{ if $cfg.ShowServerTokens }}on{{ else }}off{{ end }};
 
     # disable warnings
     uninitialized_variable_warn off;
 
-    log_format upstreaminfo '{{ buildLogFormatUpstream $cfg }}';
+    log_format upstreaminfo {{ if $cfg.LogFormatEscapeJSON }}escape=json {{ end }}'{{ buildLogFormatUpstream $cfg }}';
 
     {{/* map urls that should not appear in access.log */}}
     {{/* http://nginx.org/en/docs/http/ngx_http_log_module.html#access_log */}}
@@ -135,15 +148,17 @@ http {
        ''                $server_port;
     }
 
-    map $pass_access_scheme $the_x_forwarded_for {
-       default           $remote_addr;
-       https             $proxy_protocol_addr;
+    {{ if $cfg.UseProxyProtocol }}
+    map $http_x_forwarded_for $the_real_ip {
+        default          $http_x_forwarded_for;
+        ''               $proxy_protocol_addr;
     }
-
-    map $pass_access_scheme $the_real_ip {
-       default           $remote_addr;
-       https             $proxy_protocol_addr;
+    {{ else }}
+    map $http_x_forwarded_for $the_real_ip {
+        default          $http_x_forwarded_for;
+        ''               $remote_addr;
     }
+    {{ end }}
 
     # map port 442 to 443 for header X-Forwarded-Port
     map $pass_server_port $pass_port {
@@ -167,9 +182,14 @@ http {
     }
 
     # Obtain best http host
-    map $http_host $best_http_host {
+    map $http_host $this_host {
         default          $http_host;
         ''               $host;
+    }
+
+    map $http_x_forwarded_host $best_http_host {
+        default          $http_x_forwarded_host;
+        ''               $this_host;
     }
 
     server_name_in_redirect off;
@@ -214,26 +234,37 @@ http {
     {{ range $errCode := $cfg.CustomHTTPErrors }}
     error_page {{ $errCode }} = @custom_{{ $errCode }};{{ end }}
 
-    # In case of errors try the next upstream server before returning an error
-    proxy_next_upstream                     error timeout invalid_header http_502 http_503 http_504{{ if $cfg.RetryNonIdempotent }} non_idempotent{{ end }};
-
     proxy_ssl_session_reuse on;
 
     {{ if $cfg.AllowBackendServerHeader }}
     proxy_pass_header Server;
     {{ end }}
 
-    {{range $name, $upstream := $backends}}
-    upstream {{$upstream.Name}} {
-        {{ if eq $upstream.SessionAffinity.AffinityType "cookie" }}
-        sticky hash={{$upstream.SessionAffinity.CookieSessionAffinity.Hash}} name={{$upstream.SessionAffinity.CookieSessionAffinity.Name}}  httponly;
-        {{ else }}
+    {{ range $name, $upstream := $backends }}
+    {{ if eq $upstream.SessionAffinity.AffinityType "cookie" }}
+    upstream sticky-{{ $upstream.Name }} {
+        sticky hash={{ $upstream.SessionAffinity.CookieSessionAffinity.Hash }} name={{ $upstream.SessionAffinity.CookieSessionAffinity.Name }}  httponly;
+
+        {{ if (gt $cfg.UpstreamKeepaliveConnections 0) }}
+        keepalive {{ $cfg.UpstreamKeepaliveConnections }};
+        {{ end }}
+
+        {{ range $server := $upstream.Endpoints }}server {{ $server.Address | formatIP }}:{{ $server.Port }} max_fails={{ $server.MaxFails }} fail_timeout={{ $server.FailTimeout }};
+        {{ end }}
+    }
+    {{ end }}
+
+    upstream {{ $upstream.Name }} {
         # Load balance algorithm; empty for round robin, which is the default
         {{ if ne $cfg.LoadBalanceAlgorithm "round_robin" }}
         {{ $cfg.LoadBalanceAlgorithm }};
         {{ end }}
+
+        {{ if (gt $cfg.UpstreamKeepaliveConnections 0) }}
+        keepalive {{ $cfg.UpstreamKeepaliveConnections }};
         {{ end }}
-        {{ range $server := $upstream.Endpoints }}server {{ $server.Address }}:{{ $server.Port }} max_fails={{ $server.MaxFails }} fail_timeout={{ $server.FailTimeout }};
+
+        {{ range $server := $upstream.Endpoints }}server {{ $server.Address | formatIP }}:{{ $server.Port }} max_fails={{ $server.MaxFails }} fail_timeout={{ $server.FailTimeout }};
         {{ end }}
     }
     {{ end }}
@@ -245,7 +276,7 @@ http {
 
     {{ if isLocationAllowed $location }}
     {{ if gt (len $location.Whitelist.CIDR) 0 }}
-    geo $the_real_ip $deny_{{ $server.Hostname }}_{{ $path }} {
+    geo $the_real_ip {{ buildDenyVariable (print $server.Hostname "_"  $path) }} {
         default 1;
 
         {{ range $ip := $location.Whitelist.CIDR }}
@@ -258,7 +289,7 @@ http {
 
     {{/* build all the required rate limit zones. Each annotation requires a dedicated zone */}}
     {{/* 1MB -> 16 thousand 64-byte states or about 8 thousand 128-byte states */}}
-    {{ range $zone := (buildRateLimitZones .Servers) }}
+    {{ range $zone := (buildRateLimitZones $cfg.LimitConnZoneVariable .Servers) }}
     {{ $zone }}
     {{ end }}
 
@@ -297,18 +328,12 @@ http {
         ssl_verify_depth {{ $location.CertificateAuth.ValidationDepth }};
         {{ end }}
 
-        {{ if (or $location.Redirect.ForceSSLRedirect (and (not (empty $server.SSLCertificate)) $location.Redirect.SSLRedirect)) }}
-        # enforce ssl on server side
-        if ($pass_access_scheme = http) {
-            return 301 https://$best_http_host$request_uri;
-        }
-        {{ end }}
-
         {{ if not (empty $location.Redirect.AppRoot)}}
         if ($uri = /) {
             return 302 {{ $location.Redirect.AppRoot }};
         }
         {{ end }}
+
         {{ if not (empty $authPath) }}
         location = {{ $authPath }} {
             internal;
@@ -327,17 +352,27 @@ http {
             proxy_set_header            Host {{ $location.ExternalAuth.Host }};
             proxy_ssl_server_name       on;
 
+            client_max_body_size        "{{ $location.Proxy.BodySize }}";
+
+
             set $target {{ $location.ExternalAuth.URL }};
             proxy_pass $target;
         }
         {{ end }}
 
         location {{ $path }} {
-            set $proxy_upstream_name "{{ $location.Backend }}";
+            set $proxy_upstream_name "{{ buildUpstreamName $server.Hostname $backends $location }}";
+
+            {{ if (or $location.Redirect.ForceSSLRedirect (and (not (empty $server.SSLCertificate)) $location.Redirect.SSLRedirect)) }}
+            # enforce ssl on server side
+            if ($pass_access_scheme = http) {
+                return 301 https://$best_http_host$request_uri;
+            }
+            {{ end }}
 
             {{ if isLocationAllowed $location }}
             {{ if gt (len $location.Whitelist.CIDR) 0 }}
-            if ($deny_{{ $server.Hostname }}_{{ $path }}) {
+            if ({{ buildDenyVariable (print $server.Hostname "_"  $path) }}) {
                 return 403;
             }
             {{ end }}
@@ -391,7 +426,7 @@ http {
             proxy_set_header                        Connection        $connection_upgrade;
 
             proxy_set_header X-Real-IP              $the_real_ip;
-            proxy_set_header X-Forwarded-For        $the_x_forwarded_for;
+            proxy_set_header X-Forwarded-For        $the_real_ip;
             proxy_set_header X-Forwarded-Host       $best_http_host;
             proxy_set_header X-Forwarded-Port       $pass_port;
             proxy_set_header X-Forwarded-Proto      $pass_access_scheme;
@@ -402,7 +437,7 @@ http {
             # https://www.nginx.com/blog/mitigating-the-httpoxy-vulnerability-with-nginx/
             proxy_set_header Proxy                  "";
 
-            # Custom headers
+            # Custom headers to proxied server
             {{ range $k, $v := $proxyHeaders }}
             proxy_set_header {{ $k }}                    "{{ $v }}";
             {{ end }}
@@ -421,6 +456,9 @@ http {
             proxy_cookie_domain                     {{ $location.Proxy.CookieDomain }};
             proxy_cookie_path                       {{ $location.Proxy.CookiePath }};
 
+            # In case of errors try the next upstream server before returning an error
+            proxy_next_upstream                     {{ buildNextUpstream $location.Proxy.NextUpstream }}{{ if $cfg.RetryNonIdempotent }} non_idempotent{{ end }};
+
             {{/* rewrite only works if the content is not compressed */}}
             {{ if $location.Redirect.AddBaseURL }}
             proxy_set_header                        Accept-Encoding     "";
@@ -429,7 +467,7 @@ http {
             {{/* Add any additional configuration defined */}}
             {{ $location.ConfigurationSnippet }}
 
-            {{ buildProxyPass $backends $location }}
+            {{ buildProxyPass $server.Hostname $backends $location }}
             {{ else }}
             #{{ $location.Denied }}
             return 503;
@@ -538,22 +576,22 @@ stream {
 
     # TCP services
     {{ range $i, $tcpServer := .TCPBackends }}
-    upstream tcp-{{ $tcpServer.Backend.Namespace }}-{{ $tcpServer.Backend.Name }}-{{ $tcpServer.Backend.Port }} {
+    upstream tcp-{{ $tcpServer.Port }}-{{ $tcpServer.Backend.Namespace }}-{{ $tcpServer.Backend.Name }}-{{ $tcpServer.Backend.Port }} {
     {{ range $j, $endpoint := $tcpServer.Endpoints }}
         server                  {{ $endpoint.Address }}:{{ $endpoint.Port }};
     {{ end }}
     }
-
     server {
-        listen                  {{ $tcpServer.Port }};
-        {{ if $IsIPV6Enabled }}listen [::]:{{ $tcpServer.Port }}{{ end }}
-        proxy_pass              tcp-{{ $tcpServer.Backend.Namespace }}-{{ $tcpServer.Backend.Name }}-{{ $tcpServer.Backend.Port }};
+        listen                  {{ $tcpServer.Port }}{{ if $tcpServer.Backend.UseProxyProtocol }} proxy_protocol{{ end }};
+        {{ if $IsIPV6Enabled }}listen                  [::]:{{ $tcpServer.Port }}{{ if $tcpServer.Backend.UseProxyProtocol }} proxy_protocol{{ end }};{{ end }}
+        proxy_pass              tcp-{{ $tcpServer.Port }}-{{ $tcpServer.Backend.Namespace }}-{{ $tcpServer.Backend.Name }}-{{ $tcpServer.Backend.Port }};
     }
+
     {{ end }}
 
     # UDP services
     {{ range $i, $udpServer := .UDPBackends }}
-    upstream udp-{{ $udpServer.Backend.Namespace }}-{{ $udpServer.Backend.Name }}-{{ $udpServer.Backend.Port }} {
+    upstream udp-{{ $udpServer.Port }}-{{ $udpServer.Backend.Namespace }}-{{ $udpServer.Backend.Name }}-{{ $udpServer.Backend.Port }} {
     {{ range $j, $endpoint := $udpServer.Endpoints }}
         server                  {{ $endpoint.Address }}:{{ $endpoint.Port }};
     {{ end }}
@@ -561,9 +599,9 @@ stream {
 
     server {
         listen                  {{ $udpServer.Port }} udp;
-        {{ if $IsIPV6Enabled }}listen [::]:{{ $udpServer.Port }}{{ end }}
+        {{ if $IsIPV6Enabled }}listen                  [::]:{{ $udpServer.Port }} udp;{{ end }}
         proxy_responses         1;
-        proxy_pass              udp-{{ $udpServer.Backend.Namespace }}-{{ $udpServer.Backend.Name }}-{{ $udpServer.Backend.Port }};
+        proxy_pass              udp-{{ $udpServer.Port }}-{{ $udpServer.Backend.Namespace }}-{{ $udpServer.Backend.Name }}-{{ $udpServer.Backend.Port }};
     }
     {{ end }}
 }

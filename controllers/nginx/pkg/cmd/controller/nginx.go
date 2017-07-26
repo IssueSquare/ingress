@@ -165,9 +165,6 @@ type NGINXController struct {
 
 	cmdArgs []string
 
-	watchClass string
-	namespace  string
-
 	stats        *statsCollector
 	statusModule statusModule
 
@@ -235,23 +232,6 @@ func (n *NGINXController) start(cmd *exec.Cmd, done chan error) {
 	}()
 }
 
-// Reload checks if the running configuration file is different
-// to the specified and reload nginx if required
-func (n NGINXController) Reload(data []byte) ([]byte, bool, error) {
-	if !n.isReloadRequired(data) {
-		return []byte("Reload not required"), false, nil
-	}
-
-	err := ioutil.WriteFile(cfgPath, data, 0644)
-	if err != nil {
-		return nil, false, err
-	}
-
-	o, e := exec.Command(n.binary, "-s", "reload", "-c", cfgPath).CombinedOutput()
-
-	return o, true, e
-}
-
 // BackendDefaults returns the nginx defaults
 func (n NGINXController) BackendDefaults() defaults.Backend {
 	if n.configmap == nil {
@@ -262,36 +242,35 @@ func (n NGINXController) BackendDefaults() defaults.Backend {
 	return ngx_template.ReadConfig(n.configmap.Data).Backend
 }
 
-// isReloadRequired check if the new configuration file is different
-// from the current one.
-func (n NGINXController) isReloadRequired(data []byte) bool {
+// printDiff returns the difference between the running configuration
+// and the new one
+func (n NGINXController) printDiff(data []byte) {
 	in, err := os.Open(cfgPath)
 	if err != nil {
-		return false
+		return
 	}
 	src, err := ioutil.ReadAll(in)
 	in.Close()
 	if err != nil {
-		return false
+		return
 	}
 
 	if !bytes.Equal(src, data) {
-
 		tmpfile, err := ioutil.TempFile("", "nginx-cfg-diff")
 		if err != nil {
 			glog.Errorf("error creating temporal file: %s", err)
-			return false
+			return
 		}
 		defer tmpfile.Close()
 		err = ioutil.WriteFile(tmpfile.Name(), data, 0644)
 		if err != nil {
-			return false
+			return
 		}
 
 		diffOutput, err := diff(src, data)
 		if err != nil {
 			glog.Errorf("error computing diff: %s", err)
-			return true
+			return
 		}
 
 		if glog.V(2) {
@@ -299,9 +278,7 @@ func (n NGINXController) isReloadRequired(data []byte) bool {
 			glog.Infof("%v", string(diffOutput))
 		}
 		os.Remove(tmpfile.Name())
-		return len(diffOutput) > 0
 	}
-	return false
 }
 
 // Info return build information
@@ -404,7 +381,7 @@ func (n *NGINXController) SetListers(lister ingress.StoreLister) {
 // write the configuration file
 // returning nill implies the backend will be reloaded.
 // if an error is returned means requeue the update
-func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) ([]byte, error) {
+func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) error {
 	var longestName int
 	var serverNameBytes int
 	for _, srv := range ingressCfg.Servers {
@@ -479,11 +456,13 @@ func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) ([]byte, er
 	// the limit of open files is per worker process
 	// and we leave some room to avoid consuming all the FDs available
 	wp, err := strconv.Atoi(cfg.WorkerProcesses)
+	glog.V(3).Infof("number of worker processes: %v", wp)
 	if err != nil {
 		wp = 1
 	}
 	maxOpenFiles := (sysctlFSFileMax() / wp) - 1024
-	if maxOpenFiles < 0 {
+	glog.V(3).Infof("maximum number of open file descriptors : %v", sysctlFSFileMax())
+	if maxOpenFiles < 1024 {
 		// this means the value of RLIMIT_NOFILE is too low.
 		maxOpenFiles = 1024
 	}
@@ -497,6 +476,18 @@ func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) ([]byte, er
 
 		if exists {
 			setHeaders = cmap.(*api_v1.ConfigMap).Data
+		}
+	}
+
+	addHeaders := map[string]string{}
+	if cfg.AddHeaders != "" {
+		cmap, exists, err := n.storeLister.ConfigMap.GetByKey(cfg.AddHeaders)
+		if err != nil {
+			glog.Warningf("unexpected error reading configmap %v: %v", cfg.AddHeaders, err)
+		}
+
+		if exists {
+			addHeaders = cmap.(*api_v1.ConfigMap).Data
 		}
 	}
 
@@ -528,6 +519,7 @@ func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) ([]byte, er
 
 	content, err := n.t.Write(config.TemplateConfig{
 		ProxySetHeaders:     setHeaders,
+		AddHeaders:          addHeaders,
 		MaxOpenFiles:        maxOpenFiles,
 		BacklogSize:         sysctlSomaxconn(),
 		Backends:            ingressCfg.Backends,
@@ -540,15 +532,29 @@ func (n *NGINXController) OnUpdate(ingressCfg ingress.Configuration) ([]byte, er
 		Cfg:                 cfg,
 		IsIPV6Enabled:       n.isIPV6Enabled && !cfg.DisableIpv6,
 	})
+
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := n.testTemplate(content); err != nil {
-		return nil, err
+	err = n.testTemplate(content)
+	if err != nil {
+		return err
 	}
 
-	return content, nil
+	n.printDiff(content)
+
+	err = ioutil.WriteFile(cfgPath, content, 0644)
+	if err != nil {
+		return err
+	}
+
+	o, err := exec.Command(n.binary, "-s", "reload", "-c", cfgPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v\n%v", err, string(o))
+	}
+
+	return nil
 }
 
 // nginxHashBucketSize computes the correct nginx hash_bucket_size for a hash with the given longest key

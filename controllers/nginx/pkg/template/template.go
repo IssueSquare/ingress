@@ -31,6 +31,7 @@ import (
 
 	"github.com/golang/glog"
 
+	"github.com/pborman/uuid"
 	"k8s.io/ingress/controllers/nginx/pkg/config"
 	"k8s.io/ingress/core/pkg/ingress"
 	ing_net "k8s.io/ingress/core/pkg/net"
@@ -134,16 +135,34 @@ var (
 		"buildRateLimitZones":      buildRateLimitZones,
 		"buildRateLimit":           buildRateLimit,
 		"buildResolvers":           buildResolvers,
+		"buildUpstreamName":        buildUpstreamName,
 		"isLocationAllowed":        isLocationAllowed,
 		"buildLogFormatUpstream":   buildLogFormatUpstream,
+		"buildDenyVariable":        buildDenyVariable,
 		"getenv":                   os.Getenv,
 		"contains":                 strings.Contains,
 		"hasPrefix":                strings.HasPrefix,
 		"hasSuffix":                strings.HasSuffix,
 		"toUpper":                  strings.ToUpper,
 		"toLower":                  strings.ToLower,
+		"formatIP":                 formatIP,
+		"buildNextUpstream":        buildNextUpstream,
 	}
 )
+
+// fomatIP will wrap IPv6 addresses in [] and return IPv4 addresses
+// without modification. If the input cannot be parsed as an IP address
+// it is returned without modification.
+func formatIP(input string) string {
+	ip := net.ParseIP(input)
+	if ip == nil {
+		return input
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return input
+	}
+	return fmt.Sprintf("[%s]", input)
+}
 
 // buildResolvers returns the resolvers reading the /etc/resolv.conf file
 func buildResolvers(a interface{}) string {
@@ -240,7 +259,7 @@ func buildLogFormatUpstream(input interface{}) string {
 // (specified through the ingress.kubernetes.io/rewrite-to annotation)
 // If the annotation ingress.kubernetes.io/add-base-url:"true" is specified it will
 // add a base tag in the head of the response from the service
-func buildProxyPass(b interface{}, loc interface{}) string {
+func buildProxyPass(host string, b interface{}, loc interface{}) string {
 	backends := b.([]*ingress.Backend)
 	location, ok := loc.(*ingress.Location)
 	if !ok {
@@ -250,17 +269,23 @@ func buildProxyPass(b interface{}, loc interface{}) string {
 	path := location.Path
 	proto := "http"
 
+	upstreamName := location.Backend
 	for _, backend := range backends {
 		if backend.Name == location.Backend {
 			if backend.Secure || backend.SSLPassthrough {
 				proto = "https"
 			}
+
+			if isSticky(host, location, backend.SessionAffinity.CookieSessionAffinity.Locations) {
+				upstreamName = fmt.Sprintf("sticky-%v", upstreamName)
+			}
+
 			break
 		}
 	}
 
 	// defProxyPass returns the default proxy_pass, just the name of the upstream
-	defProxyPass := fmt.Sprintf("proxy_pass %s://%s;", proto, location.Backend)
+	defProxyPass := fmt.Sprintf("proxy_pass %s://%s;", proto, upstreamName)
 	// if the path in the ingress rule is equals to the target: no special rewrite
 	if path == location.Redirect.Target {
 		return defProxyPass
@@ -303,7 +328,7 @@ func buildProxyPass(b interface{}, loc interface{}) string {
 // buildRateLimitZones produces an array of limit_conn_zone in order to allow
 // rate limiting of request. Each Ingress rule could have up to two zones, one
 // for connection limit by IP address and other for limiting request per second
-func buildRateLimitZones(input interface{}) []string {
+func buildRateLimitZones(variable string, input interface{}) []string {
 	zones := sets.String{}
 
 	servers, ok := input.([]*ingress.Server)
@@ -315,7 +340,8 @@ func buildRateLimitZones(input interface{}) []string {
 		for _, loc := range server.Locations {
 
 			if loc.RateLimit.Connections.Limit > 0 {
-				zone := fmt.Sprintf("limit_conn_zone $binary_remote_addr zone=%v:%vm;",
+				zone := fmt.Sprintf("limit_conn_zone %v zone=%v:%vm;",
+					variable,
 					loc.RateLimit.Connections.Name,
 					loc.RateLimit.Connections.SharedSize)
 				if !zones.Has(zone) {
@@ -324,7 +350,8 @@ func buildRateLimitZones(input interface{}) []string {
 			}
 
 			if loc.RateLimit.RPS.Limit > 0 {
-				zone := fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%v:%vm rate=%vr/s;",
+				zone := fmt.Sprintf("limit_req_zone %v zone=%v:%vm rate=%vr/s;",
+					variable,
 					loc.RateLimit.RPS.Name,
 					loc.RateLimit.RPS.SharedSize,
 					loc.RateLimit.RPS.Limit)
@@ -371,4 +398,76 @@ func isLocationAllowed(input interface{}) bool {
 	}
 
 	return loc.Denied == nil
+}
+
+var (
+	denyPathSlugMap = map[string]string{}
+)
+
+// buildDenyVariable returns a nginx variable for a location in a
+// server to be used in the whitelist check
+// This method uses a unique id generator library to reduce the
+// size of the string to be used as a variable in nginx to avoid
+// issue with the size of the variable bucket size directive
+func buildDenyVariable(a interface{}) string {
+	l := a.(string)
+
+	if _, ok := denyPathSlugMap[l]; !ok {
+		denyPathSlugMap[l] = uuid.New()
+	}
+
+	return fmt.Sprintf("$deny_%v", denyPathSlugMap[l])
+}
+
+func buildUpstreamName(host string, b interface{}, loc interface{}) string {
+	backends := b.([]*ingress.Backend)
+	location, ok := loc.(*ingress.Location)
+	if !ok {
+		return ""
+	}
+
+	upstreamName := location.Backend
+
+	for _, backend := range backends {
+		if backend.Name == location.Backend {
+			if backend.SessionAffinity.AffinityType == "cookie" &&
+				isSticky(host, location, backend.SessionAffinity.CookieSessionAffinity.Locations) {
+				upstreamName = fmt.Sprintf("sticky-%v", upstreamName)
+			}
+
+			break
+		}
+	}
+
+	return upstreamName
+}
+
+func isSticky(host string, loc *ingress.Location, stickyLocations map[string][]string) bool {
+	if _, ok := stickyLocations[host]; ok {
+		for _, sl := range stickyLocations[host] {
+			if sl == loc.Path {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func buildNextUpstream(input interface{}) string {
+	nextUpstream, ok := input.(string)
+	if !ok {
+		glog.Errorf("expected an string type but %T was returned", input)
+	}
+
+	parts := strings.Split(nextUpstream, " ")
+
+	nextUpstreamCodes := make([]string, 0, len(parts))
+	for _, v := range parts {
+		if v != "" && v != "non_idempotent" {
+			nextUpstreamCodes = append(nextUpstreamCodes, v)
+		}
+	}
+
+	return strings.Join(nextUpstreamCodes, " ")
 }

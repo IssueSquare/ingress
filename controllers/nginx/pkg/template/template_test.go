@@ -88,6 +88,25 @@ var (
 	}
 )
 
+func TestFormatIP(t *testing.T) {
+	cases := map[string]struct {
+		Input, Output string
+	}{
+		"ipv4-localhost": {"127.0.0.1", "127.0.0.1"},
+		"ipv4-internet":  {"8.8.8.8", "8.8.8.8"},
+		"ipv6-localhost": {"::1", "[::1]"},
+		"ipv6-internet":  {"2001:4860:4860::8888", "[2001:4860:4860::8888]"},
+		"invalid-ip":     {"nonsense", "nonsense"},
+		"empty-ip":       {"", ""},
+	}
+	for k, tc := range cases {
+		res := formatIP(tc.Input)
+		if res != tc.Output {
+			t.Errorf("%s: called formatIp('%s'); expected '%v' but returned '%v'", k, tc.Input, tc.Output, res)
+		}
+	}
+}
+
 func TestBuildLocation(t *testing.T) {
 	for k, tc := range tmplFuncTestcases {
 		loc := &ingress.Location{
@@ -110,7 +129,7 @@ func TestBuildProxyPass(t *testing.T) {
 			Backend:  "upstream-name",
 		}
 
-		pp := buildProxyPass([]*ingress.Backend{}, loc)
+		pp := buildProxyPass("", []*ingress.Backend{}, loc)
 		if !strings.EqualFold(tc.ProxyPass, pp) {
 			t.Errorf("%s: expected \n'%v'\nbut returned \n'%v'", k, tc.ProxyPass, pp)
 		}
@@ -196,5 +215,13 @@ func BenchmarkTemplateWithData(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		ngxTpl.Write(dat)
+	}
+}
+
+func TestBuildDenyVariable(t *testing.T) {
+	a := buildDenyVariable("host1.example.com_/.well-known/acme-challenge")
+	b := buildDenyVariable("host1.example.com_/.well-known/acme-challenge")
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("Expected '%v' but returned '%v'", a, b)
 	}
 }

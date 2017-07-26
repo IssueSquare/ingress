@@ -260,11 +260,12 @@ func TestStatusActions(t *testing.T) {
 	os.Setenv("POD_NAME", "foo1")
 	os.Setenv("POD_NAMESPACE", api_v1.NamespaceDefault)
 	c := Config{
-		Client:              buildSimpleClientSet(),
-		PublishService:      "",
-		IngressLister:       buildIngressListener(),
-		DefaultIngressClass: "nginx",
-		IngressClass:        "",
+		Client:                 buildSimpleClientSet(),
+		PublishService:         "",
+		IngressLister:          buildIngressListener(),
+		DefaultIngressClass:    "nginx",
+		IngressClass:           "",
+		UpdateStatusOnShutdown: true,
 	}
 	// create object
 	fkSync := NewStatusSyncer(c)
@@ -342,7 +343,7 @@ func TestKeyfunc(t *testing.T) {
 func TestRunningAddresessWithPublishService(t *testing.T) {
 	fk := buildStatusSync()
 
-	r, _ := fk.runningAddresess()
+	r, _ := fk.runningAddresses()
 	if r == nil {
 		t.Fatalf("returned nil but expected valid []string")
 	}
@@ -356,7 +357,7 @@ func TestRunningAddresessWithPods(t *testing.T) {
 	fk := buildStatusSync()
 	fk.PublishService = ""
 
-	r, _ := fk.runningAddresess()
+	r, _ := fk.runningAddresses()
 	if r == nil {
 		t.Fatalf("returned nil but expected valid []string")
 	}

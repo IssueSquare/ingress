@@ -171,13 +171,22 @@ func (b *Backends) Get(port int64) (*compute.BackendService, error) {
 
 func (b *Backends) ensureHealthCheck(sp ServicePort) (string, error) {
 	hc := b.healthChecker.New(sp.Port, sp.Protocol)
-	if b.prober != nil {
+
+	existingLegacyHC, err := b.healthChecker.GetLegacy(sp.Port)
+	if err != nil && !utils.IsNotFoundError(err) {
+		return "", err
+	}
+
+	if existingLegacyHC != nil {
+		glog.V(4).Infof("Applying settings of existing health check to newer health check on port %+v", sp)
+		applyLegacyHCToHC(existingLegacyHC, hc)
+	} else if b.prober != nil {
 		probe, err := b.prober.GetProbe(sp)
 		if err != nil {
 			return "", err
 		}
 		if probe != nil {
-			glog.V(2).Infof("Applying httpGet settings of readinessProbe to health check on port %+v", sp)
+			glog.V(4).Infof("Applying httpGet settings of readinessProbe to health check on port %+v", sp)
 			applyProbeSettingsToHC(probe, hc)
 		}
 	}
@@ -247,7 +256,7 @@ func (b *Backends) Add(p ServicePort) error {
 	// If previous health check was legacy type, we need to delete it.
 	if existingHCLink != hcLink && strings.Contains(existingHCLink, "/httpHealthChecks/") {
 		if err = b.healthChecker.DeleteLegacy(p.Port); err != nil {
-			return err
+			glog.Warning("Failed to delete legacy HttpHealthCheck %v; Will not try again, err: %v", pName, err)
 		}
 	}
 
@@ -419,9 +428,11 @@ func (b *Backends) Shutdown() error {
 // Status returns the status of the given backend by name.
 func (b *Backends) Status(name string) string {
 	backend, err := b.cloud.GetBackendService(name)
-	if err != nil {
+	if err != nil || len(backend.Backends) == 0 {
 		return "Unknown"
 	}
+
+	// TODO: Look at more than one backend's status
 	// TODO: Include port, ip in the status, since it's in the health info.
 	hs, err := b.cloud.GetHealth(name, backend.Backends[0].Group)
 	if err != nil || len(hs.HealthStatus) == 0 || hs.HealthStatus[0] == nil {
@@ -431,15 +442,34 @@ func (b *Backends) Status(name string) string {
 	return hs.HealthStatus[0].HealthState
 }
 
+func applyLegacyHCToHC(existing *compute.HttpHealthCheck, hc *healthchecks.HealthCheck) {
+	hc.Description = existing.Description
+	hc.CheckIntervalSec = existing.CheckIntervalSec
+	hc.HealthyThreshold = existing.HealthyThreshold
+	hc.Host = existing.Host
+	hc.Port = existing.Port
+	hc.RequestPath = existing.RequestPath
+	hc.TimeoutSec = existing.TimeoutSec
+	hc.UnhealthyThreshold = existing.UnhealthyThreshold
+}
+
 func applyProbeSettingsToHC(p *api_v1.Probe, hc *healthchecks.HealthCheck) {
 	healthPath := p.Handler.HTTPGet.Path
 	// GCE requires a leading "/" for health check urls.
 	if !strings.HasPrefix(healthPath, "/") {
 		healthPath = "/" + healthPath
 	}
+	// Extract host from HTTP headers
+	host := p.Handler.HTTPGet.Host
+	for _, header := range p.Handler.HTTPGet.HTTPHeaders {
+		if header.Name == "Host" {
+			host = header.Value
+			break
+		}
+	}
 
 	hc.RequestPath = healthPath
-	hc.Host = p.Handler.HTTPGet.Host
+	hc.Host = host
 	hc.Description = "Kubernetes L7 health check generated with readiness probe settings."
 	hc.CheckIntervalSec = int64(p.PeriodSeconds) + int64(healthchecks.DefaultHealthCheckInterval.Seconds())
 	hc.TimeoutSec = int64(p.TimeoutSeconds)

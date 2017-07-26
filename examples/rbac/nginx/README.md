@@ -1,6 +1,6 @@
 # Role Based Access Control
 
-This example demontrates how to apply role based access control
+This example demontrates how to apply an nginx ingress controller with role based access control
 
 ## Overview
 
@@ -37,6 +37,7 @@ able to function as an ingress across the cluster.  These permissions are
 granted to the ClusterRole named `nginx-ingress-clusterrole`
 
 * `configmaps`, `endpoints`, `nodes`, `pods`, `secrets`: list, watch
+* `nodes`: get
 * `services`, `ingresses`: get, list, watch
 * `events`: create, patch
 * `ingresses/status`: update
@@ -48,6 +49,27 @@ permissions are granted to the Role named `nginx-ingress-role`
 
 * `configmaps`, `pods`, `secrets`: get
 * `endpoints`: create, get, update
+
+Furthermore to support leader-election, the nginx-ingress-controller needs to
+have access to a `configmap` using the resourceName `ingress-controller-leader-nginx`
+
+> Note that resourceNames can NOT be used to limit requests using the “create”
+> verb because authorizers only have access to information that can be obtained
+> from the request URL, method, and headers (resource names in a “create” request
+> are part of the request body).
+
+* `configmaps`: get, update (for resourceName `ingress-controller-leader-nginx`)
+* `configmaps`: create
+
+This resourceName is the concatenation of the `election-id` and the
+`ingress-class` as defined by the ingress-controller, which default to:
+
+* `election-id`: `ingress-controller-leader`
+* `ingress-class`: `nginx`
+* `resourceName` : `<election-id>-<ingress-class>`
+
+Please adapt accordingly if you overwrite either parameter when launching the
+nginx-ingress-controller.
 
 ### Bindings
 
@@ -67,28 +89,20 @@ change as well.
 `ClusterRoleBinding`, and `RoleBinding`.
 
 ```sh
-kubectl create -f ./nginx-ingress-controller-rbac.yml
+kubectl create -f https://raw.githubusercontent.com/kubernetes/ingress/master/examples/rbac/nginx/nginx-ingress-controller-rbac.yml
 ```
 
-2.  Create the nginx-ingress-controller
+2. Create default backend
+```sh
+kubectl create -f https://raw.githubusercontent.com/kubernetes/ingress/master/examples/rbac/nginx/default-backend.yml
+```
+
+3. Create the nginx-ingress-controller
 
 For this example to work, the Service must be in the nginx-ingress namespace:
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-ingress
-  namespace: nginx-ingress #match namespace of service account and role
-spec:
-  type: LoadBalancer
-  ports:
-    - port: 80
-      name: http
-    - port: 443
-      name: https
-  selector:
-    k8s-app: nginx-ingress-lb
+```sh
+kubectl create -f https://raw.githubusercontent.com/kubernetes/ingress/master/examples/rbac/nginx/nginx-ingress-controller.yml
 ```
 
 The serviceAccountName associated with the containers in the deployment must
@@ -96,42 +110,7 @@ match the serviceAccount from nginx-ingress-controller-rbac.yml  The namespace
 references in the Deployment metadata, container arguments, and POD_NAMESPACE
 should be in the nginx-ingress namespace.
 
-```yaml
-apiVersion: extensions/v1beta1
-kind: Deployment
-metadata:
-  name: nginx-ingress-controller
-  #match namespace of service account and role
-  namespace: nginx-ingress 
-spec:
-  replicas: 2
-  template:
-    metadata:
-      labels:
-        k8s-app: nginx-ingress-lb
-    spec:
-      #match name of service account
-      serviceAccountName: nginx-ingress-serviceaccount
-      containers:
-        - name: nginx-ingress-controller
-          image: gcr.io/google_containers/nginx-ingress-controller:version
-          #namespace matching is required in some arguments
-           args:
-            - /nginx-ingress-controller
-            - --default-backend-service=default/default-http-backend
-            - --default-ssl-certificate=$(POD_NAMESPACE)/tls-certificate
-         env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            #match namespace of service account and role
-            - name: POD_NAMESPACE 
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace	  
-          ports:
-            - containerPort: 80
-            - containerPort: 443
-
+4. Create ingress service
+```sh
+kubectl create -f https://raw.githubusercontent.com/kubernetes/ingress/master/examples/rbac/nginx/nginx-ingress-controller-service.yml
 ```
